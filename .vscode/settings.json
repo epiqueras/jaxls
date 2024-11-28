@@ -1,0 +1,23 @@
+{
+  "files.exclude": {
+    "out": false,
+    "dist": false
+  },
+  "search.exclude": {
+    "out": true,
+    "dist": true
+  },
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "always"
+  },
+  "python.analysis.extraPaths": ["bundled/libs"],
+  "python.testing.cwd": "${workspaceFolder}",
+  "python.testing.pytestArgs": ["src/test/python_tests"],
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "typescript.tsc.autoDetect": "off",
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  }
+}

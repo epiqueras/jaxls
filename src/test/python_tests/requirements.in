@@ -1,0 +1,4 @@
+pytest
+PyHamcrest
+python-jsonrpc-server
+debugpy

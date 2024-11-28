@@ -1,0 +1,158 @@
+{
+  "name": "jaxls",
+  "displayName": "JAX Language Server",
+  "description": "JAX Language features for VSCode.",
+  "version": "2024.0.0-dev",
+  "preview": true,
+  "serverInfo": {
+    "name": "JAX Language Server",
+    "module": "jaxls"
+  },
+  "publisher": "epiqueras",
+  "license": "UNLICENSED",
+  "homepage": "https://github.com/epiqueras/jaxls",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/epiqueras/jaxls.git"
+  },
+  "bugs": {
+    "url": "https://github.com/epiqueras/jaxls/issues"
+  },
+  "galleryBanner": {
+    "color": "#1e415e",
+    "theme": "dark"
+  },
+  "keywords": [
+    "python",
+    "jaxls",
+    "jax"
+  ],
+  "engines": {
+    "vscode": "^1.78.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "extensionDependencies": [
+    "ms-python.python"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Virtual Workspaces are not supported with JAX Language Server."
+    }
+  },
+  "activationEvents": [
+    "onLanguage:python",
+    "workspaceContains:*.py"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "lint": "npm run compile-tests && npm run compile && eslint src --ext ts && prettier --check .",
+    "test": "echo \"Success\"",
+    "package": "webpack --mode production --devtool source-map --config ./webpack.config.js",
+    "vsce-package": "vsce package -o jaxls.vsix"
+  },
+  "contributes": {
+    "configuration": {
+      "properties": {
+        "jaxls.args": {
+          "default": [],
+          "description": "Arguments passed in. Each argument is a separate item in the array.",
+          "items": {
+            "type": "string"
+          },
+          "scope": "resource",
+          "type": "array"
+        },
+        "jaxls.path": {
+          "default": [],
+          "description": "When set to a path to jaxls binary, extension will use that. NOTE: Using this option may slowdown server response time.",
+          "scope": "resource",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "jaxls.importStrategy": {
+          "default": "fromEnvironment",
+          "description": "Defines where `jaxls` is imported from. This setting may be ignored if `jaxls.path` is set.",
+          "enum": [
+            "useBundled",
+            "fromEnvironment"
+          ],
+          "enumDescriptions": [
+            "Always use the bundled version of `jaxls`.",
+            "Use `jaxls` from environment, fallback to bundled version only if `jaxls` not available in the environment."
+          ],
+          "scope": "window",
+          "type": "string"
+        },
+        "jaxls.interpreter": {
+          "default": [],
+          "description": "When set to a path to python executable, extension will use that to launch the server and any subprocess.",
+          "scope": "resource",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "jaxls.showNotifications": {
+          "default": "off",
+          "description": "Controls when notifications are shown by this extension.",
+          "enum": [
+            "off",
+            "onError",
+            "onWarning",
+            "always"
+          ],
+          "enumDescriptions": [
+            "All notifications are turned off, any errors or warning are still available in the logs.",
+            "Notifications are shown only in the case of an error.",
+            "Notifications are shown for errors and warnings.",
+            "Notifications are show for anything that the server chooses to show."
+          ],
+          "scope": "machine",
+          "type": "string"
+        }
+      }
+    },
+    "commands": [
+      {
+        "title": "Restart Server",
+        "category": "JAX Language Server",
+        "command": "jaxls.restart"
+      }
+    ]
+  },
+  "dependencies": {
+    "@vscode/python-extension": "^1.0.5",
+    "fs-extra": "^11.2.0",
+    "vscode-languageclient": "^8.1.0"
+  },
+  "devDependencies": {
+    "@ianvs/prettier-plugin-sort-imports": "^4.4.0",
+    "@types/fs-extra": "^11.0.4",
+    "@types/glob": "^8.1.0",
+    "@types/node": "16.x",
+    "@types/vscode": "1.78.0",
+    "@typescript-eslint/eslint-plugin": "^6.17.0",
+    "@typescript-eslint/parser": "^6.17.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.2.1",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "glob": "^11.0.0",
+    "prettier": "^3.4.1",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.7.2",
+    "webpack": "^5.96.1",
+    "webpack-cli": "^5.1.4"
+  }
+}

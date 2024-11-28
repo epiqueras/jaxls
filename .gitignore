@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+.venv/
+.nox/
+
+# Tests
+.vscode-test/
+**/.pytest_cache
+
+# Build
+bundled/libs/
+out/
+dist/
+*.vsix
+
+# Python
+**/__pycache__
+**/.vs
+.ruff_cache/

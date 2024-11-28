@@ -1,0 +1,28 @@
+{
+  "root": true,
+  "extends": [
+    "prettier",
+    "plugin:@typescript-eslint/strict",
+    "plugin:@typescript-eslint/stylistic"
+  ],
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 6,
+    "sourceType": "module"
+  },
+  "plugins": ["@typescript-eslint"],
+  "rules": {
+    "arrow-body-style": ["error", "as-needed"],
+    "object-shorthand": ["error", "always"],
+    "prefer-arrow-callback": ["error", { "allowNamedFunctions": true }],
+
+    "@typescript-eslint/consistent-type-definitions": ["error", "type"],
+    "@typescript-eslint/consistent-type-imports": "error",
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      { "varsIgnorePattern": "^_" }
+    ],
+    "@typescript-eslint/sort-type-constituents": "error"
+  },
+  "ignorePatterns": ["out", "dist", "**/*.d.ts"]
+}
