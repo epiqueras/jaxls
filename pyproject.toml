@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "jaxls"
+version = "2024.0.0"
+dependencies = [
+    "jax >= 0.4.35"
+]
+requires-python = ">= 3.8"
+authors = [
+    { name = "epiqueras", email = "19157096+epiqueras@users.noreply.github.com" }
+]
+description = "JAX Language Server APIs."
+readme = "README.md"
+license = { text = "UNLICENSED" }
+
+[project.urls]
+Homepage = "https://github.com/epiqueras/jaxls"
+Repository = "https://github.com/epiqueras/jaxls.git"
+
+
+[tool.setuptools]
+package-dir = { "" = "bundled/tool/jaxls" }

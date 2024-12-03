@@ -9,6 +9,7 @@
 .yarnrc
 **/__pycache__/**
 **/.eslintrc.json
+**/*.egg-info/**
 **/*.pyc
 **/*.ts
 **/requirements.in
@@ -20,6 +21,7 @@ bundled/libs/bin/**
 node_modules/**
 noxfile.py
 out/**
+package_dist/**
 src/**
 vsc-extension-quickstart.md
 webpack.config.js

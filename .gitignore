@@ -1,19 +1,21 @@
 # Dependencies
-node_modules/
-.venv/
 .nox/
+.venv/
+node_modules/
 
 # Tests
 .vscode-test/
 **/.pytest_cache
 
 # Build
-bundled/libs/
-out/
-dist/
 *.vsix
+bundled/libs/
+dist/
+out/
+package_dist/
 
 # Python
+.ruff_cache/
 **/__pycache__
 **/.vs
-.ruff_cache/
+**/*.egg-info/

@@ -373,6 +373,13 @@ def _run_tool(extra_args: Sequence[str]) -> utils.RunResult | jsonrpc.RpcRunResu
     return result
 
 
+@LSP_SERVER.feature(lsp.TEXT_DOCUMENT_INLAY_HINT)
+def inlay_hints(params: lsp.InlayHintParams):
+    # TODO: Implement inlay hints.
+    log_to_output("Computing inlay hints.")
+    return None
+
+
 # *****************************************************
 # Start the server.
 # *****************************************************

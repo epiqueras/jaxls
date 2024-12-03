@@ -12,6 +12,14 @@ def _install_bundled_deps(session: nox.Session) -> None:
         "-t",
         "./bundled/libs",
         "--no-cache-dir",
+        "--upgrade",
+        "-e",
+        ".",
+    )
+    session.install(
+        "-t",
+        "./bundled/libs",
+        "--no-cache-dir",
         "--implementation",
         "py",
         "--no-deps",
@@ -107,6 +115,7 @@ def install(session: nox.Session) -> None:
 @nox.session()
 def lint(session: nox.Session) -> None:
     """Runs checks on Python and TypeScript files."""
+    session.install("-e", ".")
     session.install("-r", "./requirements.txt")
     session.install("-r", "src/test/python_tests/requirements.txt")
     session.install("nox")
@@ -124,8 +133,9 @@ def lint(session: nox.Session) -> None:
 @nox.session()
 def tests(session: nox.Session) -> None:
     """Runs all the tests for the extension."""
+    session.install("-e", ".")
     session.install("-r", "src/test/python_tests/requirements.txt")
-    session.run("pytest", "src/test/python_tests")
+    session.run("pytest", "-v", "-s", "src/test/python_tests")
     session.run("npm", "test", external=True)
 
 
@@ -142,3 +152,11 @@ def update_packages(session: nox.Session) -> None:
     session.install("wheel", "pip-tools")
     _update_pip_packages(session)
     _update_npm_packages(session)
+
+
+@nox.session()
+def publish_pypi(session: nox.Session) -> None:
+    """Builds and uploads package to PyPI."""
+    session.install("build", "twine")
+    session.run("python", "-m", "build", "--outdir", "package_dist/")
+    session.run("python", "-m", "twine", "upload", "package_dist/*")

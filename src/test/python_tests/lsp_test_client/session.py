@@ -54,9 +54,13 @@ class LspSession(MethodDispatcher):
         )
 
         assert self._sub.stdin is not None
-        self._writer = JsonRpcStreamWriter(os.fdopen(self._sub.stdin.fileno(), "wb"))
+        self._writer = JsonRpcStreamWriter(
+            os.fdopen(self._sub.stdin.fileno(), "wb", closefd=False)
+        )
         assert self._sub.stdout is not None
-        self._reader = JsonRpcStreamReader(os.fdopen(self._sub.stdout.fileno(), "rb"))
+        self._reader = JsonRpcStreamReader(
+            os.fdopen(self._sub.stdout.fileno(), "rb", closefd=False)
+        )
 
         dispatcher = {
             PUBLISH_DIAGNOSTICS: self._publish_diagnostics,
@@ -69,11 +73,6 @@ class LspSession(MethodDispatcher):
 
     def __exit__(self, typ, value, _tb):
         self.shutdown(True)
-        try:
-            assert self._sub is not None
-            self._sub.terminate()
-        except Exception:
-            pass
         assert self._endpoint is not None
         self._endpoint.shutdown()
         self._thread_pool.shutdown()
@@ -146,6 +145,11 @@ class LspSession(MethodDispatcher):
     def text_document_formatting(self, formatting_params):
         """Sends text document formatting request to LSP server."""
         fut = self._send_request("textDocument/formatting", params=formatting_params)
+        return fut.result()
+
+    def text_document_inlay_hint(self, inlay_hint_params):
+        """Sends text document inlay hint request to LSP server."""
+        fut = self._send_request("textDocument/inlayHint", params=inlay_hint_params)
         return fut.result()
 
     def text_document_code_action(self, code_action_params):

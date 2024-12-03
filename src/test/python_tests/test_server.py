@@ -17,5 +17,17 @@ def test_example():
     actual = {}
     with session.LspSession() as ls_session:
         ls_session.initialize()
+        ls_session.set_notification_callback(session.WINDOW_LOG_MESSAGE, print)
+        result = ls_session.text_document_inlay_hint(
+            {
+                "textDocument": {"uri": TEST_FILE_URI},
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 1, "character": 0},
+                },
+            }
+        )
+        # TODO: Implement test.
+        print("RESULT", result)
     expected = {}
     assert_that(actual, is_(expected))
