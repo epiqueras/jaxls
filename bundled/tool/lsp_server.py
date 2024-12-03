@@ -191,8 +191,8 @@ def log_always(message: str) -> None:
 # *****************************************************
 # Internal execution APIs.
 # *****************************************************
-def _run_tool_on_document(
-    document: workspace.Document,
+def _run_tool(
+    document: None | workspace.Document = None,
     use_stdin: bool = False,
     extra_args: Optional[Sequence[str]] = None,
 ) -> utils.RunResult | jsonrpc.RpcRunResult | None:
@@ -203,13 +203,13 @@ def _run_tool_on_document(
     """
     if extra_args is None:
         extra_args = []
-    if str(document.uri).startswith("vscode-notebook-cell"):
-        # Skip notebook cells
-        return None
-
-    if utils.is_stdlib_file(document.path):
-        # Skip standard library python files.
-        return None
+    if document:
+        if str(document.uri).startswith("vscode-notebook-cell"):
+            # Skip notebook cells
+            return None
+        if utils.is_stdlib_file(document.path):
+            # Skip standard library python files.
+            return None
 
     # Deep copy here to prevent accidentally updating global settings.
     settings = copy.deepcopy(_get_settings_by_document(document))
@@ -236,21 +236,16 @@ def _run_tool_on_document(
         argv = [TOOL_MODULE]
 
     argv += TOOL_ARGS + settings["args"] + extra_args
-
-    if use_stdin:
-        argv += []
-    else:
+    if not use_stdin and document:
         argv += [document.path]
+    document_source = document.source.replace("\r\n", "\n") if document else None
 
     if use_path:
         # This mode is used when running executables.
         log_to_output(" ".join(argv))
         log_to_output(f"CWD Server: {cwd}")
         result = utils.run_path(
-            argv=argv,
-            use_stdin=use_stdin,
-            cwd=cwd,
-            source=document.source.replace("\r\n", "\n"),
+            argv=argv, use_stdin=use_stdin, cwd=cwd, source=document_source
         )
         if result.stderr:
             log_to_output(result.stderr)
@@ -259,7 +254,6 @@ def _run_tool_on_document(
         # the interpreter used for running this server.
         log_to_output(" ".join(settings["interpreter"] + ["-m"] + argv))
         log_to_output(f"CWD Server: {cwd}")
-
         result = jsonrpc.run_over_json_rpc(
             workspace=code_workspace,
             interpreter=settings["interpreter"],
@@ -267,7 +261,7 @@ def _run_tool_on_document(
             argv=argv,
             use_stdin=use_stdin,
             cwd=cwd,
-            source=document.source,
+            source=document_source,
         )
         if result.exception:
             log_error(result.exception)
@@ -287,7 +281,7 @@ def _run_tool_on_document(
                     argv=argv,
                     use_stdin=use_stdin,
                     cwd=cwd,
-                    source=document.source,
+                    source=document_source,
                 )
             except Exception:
                 log_error(traceback.format_exc(chain=True))
@@ -295,82 +289,13 @@ def _run_tool_on_document(
         if result.stderr:
             log_to_output(result.stderr)
 
-    log_to_output(f"{document.uri} :\r\n{result.stdout}")
+    log_to_output(f"{document.uri if document else 'workspace'} :\r\n{result.stdout}")
     return result
 
 
-def _run_tool(extra_args: Sequence[str]) -> utils.RunResult | jsonrpc.RpcRunResult:
-    """Runs tool."""
-    # Deep copy here to prevent accidentally updating global settings.
-    settings = copy.deepcopy(_get_settings_by_document(None))
-
-    code_workspace = settings["workspaceFS"]
-    cwd = settings["workspaceFS"]
-
-    use_path = False
-    use_rpc = False
-    if settings["path"]:
-        # 'path' setting takes priority over everything.
-        use_path = True
-        argv = settings["path"]
-    elif settings["interpreter"] and not utils.is_current_interpreter(
-        settings["interpreter"][0]
-    ):
-        # If there is a different interpreter set use JSON-RPC to the subprocess
-        # running under that interpreter.
-        argv = [TOOL_MODULE]
-        use_rpc = True
-    else:
-        # if the interpreter is same as the interpreter running this
-        # process then run as module.
-        argv = [TOOL_MODULE]
-
-    argv += extra_args
-
-    if use_path:
-        # This mode is used when running executables.
-        log_to_output(" ".join(argv))
-        log_to_output(f"CWD Server: {cwd}")
-        result = utils.run_path(argv=argv, use_stdin=True, cwd=cwd)
-        if result.stderr:
-            log_to_output(result.stderr)
-    elif use_rpc:
-        # This mode is used if the interpreter running this server is different from
-        # the interpreter used for running this server.
-        log_to_output(" ".join(settings["interpreter"] + ["-m"] + argv))
-        log_to_output(f"CWD Server: {cwd}")
-        result = jsonrpc.run_over_json_rpc(
-            workspace=code_workspace,
-            interpreter=settings["interpreter"],
-            module=TOOL_MODULE,
-            argv=argv,
-            use_stdin=True,
-            cwd=cwd,
-        )
-        if result.exception:
-            log_error(result.exception)
-            result = utils.RunResult(result.stdout, result.stderr)
-        elif result.stderr:
-            log_to_output(result.stderr)
-    else:
-        # In this mode the tool is run as a module in the same process as the language server.
-        log_to_output(" ".join([sys.executable, "-m"] + argv))
-        log_to_output(f"CWD Server: {cwd}")
-        # This is needed to preserve sys.path, in cases where the tool modifies
-        # sys.path and that might not work for this scenario next time around.
-        with utils.substitute_attr(sys, "path", sys.path[:]):
-            try:
-                result = utils.run_module(
-                    module=TOOL_MODULE, argv=argv, use_stdin=True, cwd=cwd
-                )
-            except Exception:
-                log_error(traceback.format_exc(chain=True))
-                raise
-        if result.stderr:
-            log_to_output(result.stderr)
-
-    log_to_output(f"\r\n{result.stdout}\r\n")
-    return result
+# *****************************************************
+# Typed LSP features.
+# *****************************************************
 
 
 @LSP_SERVER.feature(lsp.TEXT_DOCUMENT_INLAY_HINT)
