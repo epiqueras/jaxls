@@ -8,7 +8,7 @@ import os
 import pathlib
 import sys
 import traceback
-from typing import Any, Optional, Sequence
+from typing import Any, Optional
 
 
 # **********************************************************
@@ -32,6 +32,7 @@ update_sys_path(
 # **********************************************************
 # Imports needed for the language server goes below this.
 # **********************************************************
+import jaxls  # noqa: E402
 import lsp_jsonrpc as jsonrpc  # noqa: E402
 import lsp_utils as utils  # noqa: E402
 import lsprotocol.types as lsp  # noqa: E402
@@ -193,8 +194,8 @@ def log_always(message: str) -> None:
 # *****************************************************
 def _run_tool(
     document: None | workspace.Document = None,
+    extra_args: Optional[list[str]] = None,
     use_stdin: bool = False,
-    extra_args: Optional[Sequence[str]] = None,
 ) -> utils.RunResult | jsonrpc.RpcRunResult | None:
     """Runs tool on the given document.
 
@@ -235,10 +236,13 @@ def _run_tool(
         # process then run as module.
         argv = [TOOL_MODULE]
 
-    argv += TOOL_ARGS + settings["args"] + extra_args
+    argv += extra_args
     if not use_stdin and document:
         argv += [document.path]
-    document_source = document.source.replace("\r\n", "\n") if document else None
+    argv += TOOL_ARGS + settings["args"]
+    document_source = (
+        document.source.replace("\r\n", "\n") if document and use_stdin else None
+    )
 
     if use_path:
         # This mode is used when running executables.
@@ -300,9 +304,38 @@ def _run_tool(
 
 @LSP_SERVER.feature(lsp.TEXT_DOCUMENT_INLAY_HINT)
 def inlay_hints(params: lsp.InlayHintParams):
-    # TODO: Implement inlay hints.
+    document = LSP_SERVER.workspace.get_document(params.text_document.uri)
     log_to_output("Computing inlay hints.")
-    return None
+    result = _run_tool(document, [jaxls.Method.typed])
+    if result is None:
+        return None
+
+    inlay_hints: list[lsp.InlayHint] = []
+    type_registry = jaxls.type_registry.model_validate_json(result.stdout)
+    if document.path not in type_registry.frames:
+        return None
+    for eqn_types in type_registry.frames[document.path].values():
+        frame = eqn_types.frame
+        if eqn_types.message:
+            label = f": {eqn_types.message}"
+            tooltip = eqn_types.tooltip or eqn_types.message
+        else:
+            shape = eqn_types.out_shapes[-1]
+            label = f": {shape.dtype}[{", ".join(shape.shape)}]"
+            tooltip = eqn_types.tooltip
+        inlay_hints.append(
+            lsp.InlayHint(
+                position=lsp.Position(
+                    line=frame.start_line - 1, character=frame.start_column - 3
+                ),
+                label=label,
+                kind=lsp.InlayHintKind.Type,
+                tooltip=tooltip,
+                padding_left=False,
+                padding_right=True,
+            )
+        )
+    return inlay_hints
 
 
 # *****************************************************

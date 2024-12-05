@@ -19,3 +19,4 @@ package_dist/
 **/__pycache__
 **/.vs
 **/*.egg-info/
+uv.lock

@@ -1,3 +1,4 @@
-from .typed import Shaped, symbolic_shape, typed
+from .methods import Method
+from .typed import Shaped, symbolic_shape, type_registry, typed
 
-__all__ = ["Shaped", "symbolic_shape", "typed"]
+__all__ = ["Method", "Shaped", "symbolic_shape", "type_registry", "typed"]

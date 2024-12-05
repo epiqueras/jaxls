@@ -8,9 +8,11 @@ name = "jaxls"
 version = "2024.0.0"
 dependencies = [
     "jax >= 0.4.35",
-    "absl-py"
+    "typer",
+    "pydantic",
+    "absl-py",
 ]
-requires-python = ">= 3.8"
+requires-python = ">= 3.10"
 authors = [
     { name = "epiqueras", email = "19157096+epiqueras@users.noreply.github.com" }
 ]
@@ -26,3 +28,6 @@ Repository = "https://github.com/epiqueras/jaxls.git"
 where = ["bundled/tool"]
 include = ["jaxls"]
 namespaces = false
+
+[project.scripts]
+jaxls = "jaxls.__main__:main"

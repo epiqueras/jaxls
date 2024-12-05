@@ -23,5 +23,6 @@ noxfile.py
 out/**
 package_dist/**
 src/**
+uv.lock
 vsc-extension-quickstart.md
 webpack.config.js
