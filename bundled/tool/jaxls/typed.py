@@ -8,7 +8,17 @@ from functools import partial
 from inspect import Parameter, signature
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Type, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Callable,
+    Type,
+    TypeVar,
+    cast,
+    get_args,
+    get_origin,
+)
 
 import jax
 import jax.numpy as jnp
@@ -33,16 +43,48 @@ else:
             return SimpleNamespace(shape=shape, dtype=dtype)
 
 
-def _parse_annotation(annotation: Any) -> jax.ShapeDtypeStruct | None:
+ShapeDtypeStructTree = Any
+
+
+def pp_shapes(tree: ShapeDtypeStructTree) -> str:
+    """Returns a pretty printed string representation of a ShapeDtypeStructTree."""
+
+    def dtype2str(dtype: jnp.dtype | str) -> str:
+        if isinstance(dtype, str):
+            dtype = jnp.dtype(dtype)
+        kind = dtype.kind
+        itemsize = dtype.itemsize
+        return f"{kind}{itemsize * 8}"  # e.g., 'f32' for np.float32
+
+    def shape2str(x: jax.ShapeDtypeStruct) -> str:
+        shape_str = ", ".join(str(s) for s in x.shape)
+        return f"{dtype2str(x.dtype)}[{shape_str}]"
+
+    return str(jax.tree_util.tree_map(shape2str, tree))
+
+
+def _parse_annotation(annotation: Any) -> ShapeDtypeStructTree | None:
     if annotation == Parameter.empty:
         return None
     if (
-        not isinstance(annotation, SimpleNamespace)
-        or not hasattr(annotation, "shape")
-        or not hasattr(annotation, "dtype")
+        isinstance(annotation, SimpleNamespace)
+        or hasattr(annotation, "shape")
+        or hasattr(annotation, "dtype")
     ):
+        # Bottomed out on a shaped type.
+        return jax.ShapeDtypeStruct(annotation.shape, annotation.dtype)
+
+    annotations = getattr(annotation, "__annotations__", None)
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if annotations is None and origin is None:
+        # Bottomed out on a non complex type.
         raise ValueError(f"Unsupported annotation: {annotation}.")
-    return jax.ShapeDtypeStruct(annotation.shape, annotation.dtype)
+    if annotations is not None:
+        return annotation(**{k: _parse_annotation(v) for k, v in annotations.items()})
+    if isinstance(origin, (type(tuple), type(list), type(set), type(frozenset))):
+        return origin([_parse_annotation(a) for a in args])
+    raise ValueError(f"Unsupported annotation: {annotation=} {origin=} {args=}.")
 
 
 @dataclass(kw_only=True, frozen=True, slots=True)
@@ -99,9 +141,9 @@ def _process_error(frame: traceback.FrameSummary, message: str) -> Types:
         frame=Frame(
             file_name=frame.filename,
             function_name="",
-            start_line=(frame.lineno or 0),
+            start_line=(frame.lineno or 1),
             start_column=(frame.colno or 0),
-            end_line=(frame.end_lineno or 0),
+            end_line=(frame.end_lineno or 1),
             end_column=(frame.end_colno or 0),
         ),
         out_shapes=[],
@@ -120,7 +162,7 @@ def _get_return_info(func: Callable[..., Any]) -> tuple[int | None, int | None]:
                 if isinstance(body_item, ast.Return) and body_item.value:
                     return (
                         starting_line + body_item.lineno - 1,
-                        (body_item.value.end_col_offset or 0) + 3,
+                        (body_item.value.end_col_offset or 0),
                     )
     return None, None
 
@@ -129,12 +171,10 @@ _dont_error = False
 
 
 def _process_out_shape_mismatch(
-    frame: Frame, shape_return: jax.ShapeDtypeStruct, out_shape: jax.ShapeDtypeStruct
+    frame: Frame, shape_return: ShapeDtypeStructTree, out_shape: ShapeDtypeStructTree
 ) -> EqnTypes:
-    return_shape_str = (
-        f"{shape_return.dtype}[{', '.join(map(str, shape_return.shape))}]"
-    )
-    inferred_shape_str = f"{out_shape.dtype}[{', '.join(map(str, out_shape.shape))}]"
+    return_shape_str = pp_shapes(shape_return)
+    inferred_shape_str = pp_shapes(out_shape)
     message = f"Return type {return_shape_str} does not match inferred type {inferred_shape_str}."
     if not _dont_error:
         raise ValueError(message)
@@ -212,7 +252,7 @@ def typed(*args, **kwargs):
             ):
                 return_line, return_col = _get_return_info(func)
                 return_frame = types.eqns[-1].frame._replace(
-                    start_line=return_line, start_column=return_col
+                    start_line=return_line, end_column=return_col
                 )
                 out_shape_mismatch_eqn = _process_out_shape_mismatch(
                     return_frame,
@@ -232,7 +272,13 @@ def typed(*args, **kwargs):
         for eqn_types in types.eqns:
             file_name = eqn_types.frame.file_name
             frames[file_name][
-                hash((eqn_types.frame.file_name, eqn_types.frame.start_line))
+                hash(
+                    (
+                        eqn_types.frame.file_name,
+                        eqn_types.frame.start_line,
+                        eqn_types.frame.end_column,
+                    )
+                )
             ] = eqn_types
         type_registry.frames.update(frames)
 

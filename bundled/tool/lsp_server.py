@@ -321,12 +321,12 @@ def inlay_hints(params: lsp.InlayHintParams):
             tooltip = eqn_types.tooltip or eqn_types.message
         else:
             shape = eqn_types.out_shapes[-1]
-            label = f": {shape.dtype}[{", ".join(shape.shape)}]"
-            tooltip = eqn_types.tooltip
+            label = f": {jaxls.pp_shapes(shape)}"
+            tooltip = eqn_types.tooltip or label
         inlay_hints.append(
             lsp.InlayHint(
                 position=lsp.Position(
-                    line=frame.start_line - 1, character=frame.start_column - 3
+                    line=frame.start_line - 1, character=frame.end_column
                 ),
                 label=label,
                 kind=lsp.InlayHintKind.Type,
