@@ -2,8 +2,9 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "type": "npm",
-      "script": "watch",
+      "label": "npm: watch",
+      "type": "shell",
+      "command": "source ${HOME}/.nvm/nvm.sh && npm run watch",
       "problemMatcher": ["$ts-webpack-watch", "$tslint-webpack-watch"],
       "isBackground": true,
       "presentation": {
@@ -16,8 +17,9 @@
       }
     },
     {
-      "type": "npm",
-      "script": "watch-tests",
+      "label": "npm: watch-tests",
+      "type": "shell",
+      "command": "source ${HOME}/.nvm/nvm.sh && npm run watch-tests",
       "problemMatcher": "$tsc-watch",
       "isBackground": true,
       "presentation": {
