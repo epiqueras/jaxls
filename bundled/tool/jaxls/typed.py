@@ -1,11 +1,11 @@
 import ast
 import inspect
+import os
 import runpy
 import traceback
-from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
-from inspect import Parameter, signature
+from inspect import Parameter, Signature, signature
 from pathlib import Path
 from types import SimpleNamespace
 from typing import (
@@ -18,16 +18,23 @@ from typing import (
     cast,
     get_args,
     get_origin,
+    overload,
 )
 
 import jax
 import jax.numpy as jnp
 import pydantic
 import typer
+from flax import nnx
 from jax import core, export
 from jax._src import source_info_util, traceback_util
+from jax._src.export import shape_poly
 
+source_info_util.register_exclusion(__file__)
+traceback_util.register_exclusion(__file__)
+source_info_util.register_exclusion(os.path.dirname(nnx.__file__))
 symbolic_shape = export.symbolic_shape
+DimSize = shape_poly.DimSize
 Frame = source_info_util.Frame
 
 
@@ -39,6 +46,9 @@ else:
         def __class_getitem__(
             cls, indices: tuple[Type[jax.Array], tuple[int, ...], jnp.dtype]
         ) -> SimpleNamespace:
+            if len(indices) == 2:
+                scalar_type, dim_size = indices
+                return SimpleNamespace(scalar_type=scalar_type, dim_size=dim_size)
             _, shape, dtype = indices
             return SimpleNamespace(shape=shape, dtype=dtype)
 
@@ -66,13 +76,15 @@ def pp_shapes(tree: ShapeDtypeStructTree) -> str:
 def _parse_annotation(annotation: Any) -> ShapeDtypeStructTree | None:
     if annotation == Parameter.empty:
         return None
-    if (
-        isinstance(annotation, SimpleNamespace)
-        or hasattr(annotation, "shape")
-        or hasattr(annotation, "dtype")
-    ):
-        # Bottomed out on a shaped type.
-        return jax.ShapeDtypeStruct(annotation.shape, annotation.dtype)
+    if isinstance(annotation, SimpleNamespace):
+        if hasattr(annotation, "shape") and hasattr(annotation, "dtype"):
+            # Bottomed out on a shaped type.
+            return jax.ShapeDtypeStruct(annotation.shape, annotation.dtype)
+        elif hasattr(annotation, "scalar_type") and hasattr(annotation, "dim_size"):
+            return annotation.dim_size
+        else:
+            # Invalid use of Shaped.
+            raise ValueError(f"Unsupported annotation: {annotation}.")
 
     annotations = getattr(annotation, "__annotations__", None)
     origin = get_origin(annotation)
@@ -82,9 +94,53 @@ def _parse_annotation(annotation: Any) -> ShapeDtypeStructTree | None:
         raise ValueError(f"Unsupported annotation: {annotation}.")
     if annotations is not None:
         return annotation(**{k: _parse_annotation(v) for k, v in annotations.items()})
-    if isinstance(origin, (type(tuple), type(list), type(set), type(frozenset))):
+    if isinstance(origin, type(tuple)):
         return origin([_parse_annotation(a) for a in args])
     raise ValueError(f"Unsupported annotation: {annotation=} {origin=} {args=}.")
+
+
+def _parse_signature(
+    sig: Signature,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    skip_first: bool = False,
+) -> tuple[
+    list[ShapeDtypeStructTree], dict[str, ShapeDtypeStructTree], ShapeDtypeStructTree
+]:
+    shape_args = []
+    shape_kwargs = {}
+    start = 1 if skip_first else 0
+    for i, (name, param) in enumerate(list(sig.parameters.items())[start:]):
+        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            raise ValueError(f"typed decorator does not support varargs {param=}.")
+
+        # Look for decorator overrides.
+        if param.kind == param.POSITIONAL_ONLY:
+            if i < len(args):
+                shape_args.append(args[i])
+                continue
+        if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY):
+            if name in kwargs:
+                shape_kwargs[name] = kwargs[name]
+                continue
+        if param.kind == param.POSITIONAL_OR_KEYWORD:
+            # If we got here it could be because it was not passed as a keyword.
+            if i < len(args):
+                shape_args.append(args[i])
+                continue
+
+        # Parse the annotation, if any.
+        annotation = _parse_annotation(param.annotation)
+        if annotation is None:
+            raise ValueError(f"Unsupported parameter kind: {param=} {param.kind=}.")
+
+        # If we got here, we have an annotation, and no overrides.
+        if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
+            shape_args.append(annotation)
+        else:
+            shape_kwargs[name] = annotation
+    shape_return = _parse_annotation(sig.return_annotation)
+    return shape_args, shape_kwargs, shape_return
 
 
 @dataclass(kw_only=True, frozen=True, slots=True)
@@ -195,105 +251,140 @@ class TypeRegistry(pydantic.BaseModel):
 type_registry: TypeRegistry = TypeRegistry(frames={})
 
 
-_T = TypeVar("_T", bound=Callable[..., Any])
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 
-def typed(*args, **kwargs):
-    if len(args) == 1 and callable(args[0]) and not kwargs:
-        func, *args = args
-    else:
-        func = None
+class _MissingF:
+    pass
 
-    def decorator(func: _T) -> _T:
-        sig = signature(func)
-        shape_args = []
-        shape_kwargs = {}
-        for i, (name, param) in enumerate(sig.parameters.items()):
-            if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
-                raise ValueError("typed decorator does not support varargs.")
 
-            # Look for decorator overrides.
-            if param.kind == param.POSITIONAL_ONLY:
-                if i < len(args):
-                    shape_args.append(args[i])
-                    continue
-            if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY):
-                if name in kwargs:
-                    shape_kwargs[name] = kwargs[name]
-                    continue
-            if param.kind == param.POSITIONAL_OR_KEYWORD:
-                # If we got here it could be because it was not passed as a keyword.
-                if i < len(args):
-                    shape_args.append(args[i])
-                    continue
+@overload
+def typed(func: _F, *, args: tuple[Any, ...] = (), **kwargs) -> _F: ...
+@overload
+def typed(*, args: tuple[Any, ...] = (), **kwargs) -> Callable[[_F], _F]: ...
+def typed(
+    func: _F | type[_MissingF] = _MissingF, *, args: tuple[Any, ...] = (), **kwargs
+) -> _F | Callable[[_F], _F]:
+    if func is _MissingF:
+        return cast(Callable[[_F], _F], partial(typed, args=args, **kwargs))
+    assert isinstance(func, Callable)
 
-            # Parse the annotation, if any.
-            annotation = _parse_annotation(param.annotation)
-            if annotation is None:
-                raise ValueError(f"Unsupported parameter kind: {param.kind}.")
+    sig = signature(func)
+    shape_args, shape_kwargs, shape_return = _parse_signature(sig, args, kwargs)
+    static_kwargs = {k: v for k, v in kwargs.items() if k not in shape_kwargs}
+    try:
+        jaxpr, out_shape = jax.make_jaxpr(
+            partial(func, **shape_kwargs), **static_kwargs, return_shape=True
+        )(*shape_args)
+        types = _process_jaxpr(jaxpr)
+        if (
+            shape_return is not None
+            and out_shape is not None
+            and shape_return != out_shape
+        ):
+            return_line, return_col = _get_return_info(func)
+            return_frame = types.eqns[-1].frame._replace(
+                start_line=return_line, end_column=return_col
+            )
+            out_shape_mismatch_eqn = _process_out_shape_mismatch(
+                return_frame,
+                shape_return,
+                out_shape,
+            )
+            types.eqns.append(out_shape_mismatch_eqn)
+    except Exception as e:
+        if e.__traceback__ is None:
+            return cast(_F, func)
+        tb = traceback_util.filter_traceback(e.__traceback__)
+        tb = traceback.extract_tb(tb)
+        frame = tb[0]
+        types = _process_error(frame, str(e))
 
-            # If we got here, we have an annotation, and no overrides.
-            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
-                shape_args.append(annotation)
-            else:
-                shape_kwargs[name] = annotation
-        static_kwargs = {k: v for k, v in kwargs.items() if k not in shape_kwargs}
-        shape_return = _parse_annotation(sig.return_annotation)
-
-        try:
-            jaxpr, out_shape = jax.make_jaxpr(
-                partial(func, **shape_kwargs), **static_kwargs, return_shape=True
-            )(*shape_args)
-            types = _process_jaxpr(jaxpr)
-            if (
-                shape_return is not None
-                and out_shape is not None
-                and shape_return != out_shape
-            ):
-                return_line, return_col = _get_return_info(func)
-                return_frame = types.eqns[-1].frame._replace(
-                    start_line=return_line, end_column=return_col
+    for eqn_types in types.eqns:
+        file_name = eqn_types.frame.file_name
+        if file_name not in type_registry.frames:
+            type_registry.frames[file_name] = {}
+        type_registry.frames[file_name][
+            hash(
+                (
+                    eqn_types.frame.file_name,
+                    eqn_types.frame.start_line,
+                    eqn_types.frame.end_column,
                 )
-                out_shape_mismatch_eqn = _process_out_shape_mismatch(
-                    return_frame,
-                    shape_return,
-                    out_shape,
-                )
-                types.eqns.append(out_shape_mismatch_eqn)
-        except Exception as e:
-            if e.__traceback__ is None:
-                return func
-            tb = traceback_util.filter_traceback(e.__traceback__)
-            tb = traceback.extract_tb(tb)
-            frame = tb[1]
-            types = _process_error(frame, str(e))
+            )
+        ] = eqn_types
 
-        frames = defaultdict(dict)
-        for eqn_types in types.eqns:
-            file_name = eqn_types.frame.file_name
-            frames[file_name][
-                hash(
-                    (
-                        eqn_types.frame.file_name,
-                        eqn_types.frame.start_line,
-                        eqn_types.frame.end_column,
-                    )
-                )
-            ] = eqn_types
-        type_registry.frames.update(frames)
-
-        return func
-
-    # Handle both @typed and @typed() usage.
-    if func is not None:
-        return decorator(func)
-    return decorator
+    return cast(_F, func)
 
 
 def run(path: Path):
     global _dont_error
     _dont_error = True
+    type_registry.frames = {}
     runpy.run_path(str(path))
     _dont_error = False
     json_dump = type_registry.model_dump_json()
     typer.echo(json_dump)
+
+
+@overload
+def typed_nnx(
+    func: _F, *, args: tuple[Any, ...] = (), has_self: bool = False, **kwargs
+) -> _F: ...
+@overload
+def typed_nnx(
+    *, args: tuple[Any, ...] = (), has_self: bool = False, **kwargs
+) -> Callable[[_F], _F]: ...
+def typed_nnx(
+    func: _F | type[_MissingF] = _MissingF,
+    *,
+    args: tuple[Any, ...] = (),
+    has_self: bool = False,
+    **kwargs,
+) -> _F | Callable[[_F], _F]:
+    if func is _MissingF:
+        return cast(Callable[[_F], _F], partial(typed_nnx, args=args, **kwargs))
+    assert isinstance(func, Callable)
+
+    if isinstance(func, type) and issubclass(func, nnx.Module):
+
+        @nnx.eval_shape
+        def module_shape():
+            sig = signature(func.__init__)
+            shape_args, shape_kwargs, _ = _parse_signature(
+                sig,
+                kwargs.get("init_args", ()),
+                kwargs.get("init_kwargs", {}),
+                skip_first=True,
+            )
+            return func(*shape_args, **shape_kwargs)
+
+        typed_nnx(
+            args=(module_shape, *kwargs.get("call_args", ())),
+            **kwargs.get("call_kwargs", {}),
+        )(func.__call__)
+    else:
+        sig = signature(func)
+        shape_args, shape_kwargs, _ = _parse_signature(
+            sig,
+            tuple(args[1:] if has_self else args),
+            kwargs,
+            skip_first=has_self,
+        )
+        if has_self:
+            assert len(args) > 0
+            shape_args = [args[0]] + shape_args
+
+        def pytree_func(tree_shape_args, tree_shape_kwargs):
+            shape_args, shape_kwargs = nnx.extract.from_tree(
+                (tree_shape_args, tree_shape_kwargs)
+            )
+            return func(*shape_args, *shape_kwargs)
+
+        tree_shape_args, tree_shape_kwargs = nnx.extract.to_tree(
+            (shape_args, shape_kwargs)
+        )
+        typed(args=(tree_shape_args, tree_shape_kwargs))(pytree_func)
+
+    func = cast(_F, func)
+    return func

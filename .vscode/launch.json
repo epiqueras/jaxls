@@ -32,7 +32,7 @@
       "request": "launch",
       "console": "integratedTerminal",
       "purpose": ["debug-test"],
-      "justMyCode": true,
+      "justMyCode": false,
       "presentation": {
         "hidden": true,
         "group": "",

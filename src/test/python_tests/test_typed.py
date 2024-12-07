@@ -7,8 +7,9 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+from flax import nnx
 from hamcrest import assert_that, is_
-from jaxls import Shaped, symbolic_shape, type_registry, typed
+from jaxls import Shaped, symbolic_shape, type_registry, typed, typed_nnx
 
 
 def _get_last_eqn_types():
@@ -75,6 +76,29 @@ def test_basic_error():
             "dot_general requires contracting dimensions to have the same shape, got (Length,) and (Batch,)."
         ),
     )
+
+    json_dump = type_registry.model_dump_json()
+    type_registry.model_validate_json(json_dump)
+
+
+def test_nnx():
+    """Tests nnx."""
+
+    Batch, DIn, DOut = symbolic_shape("Batch, DIn, DOut")
+
+    @typed_nnx
+    class Linear(nnx.Module):
+        def __init__(self, din: Shaped[int, DIn], dout: Shaped[int, DOut]):
+            self.w = nnx.Param(jnp.ones((din, dout)))
+            self.b = nnx.Param(jnp.zeros((dout,)))
+
+        def __call__(self, x: Shaped[jax.Array, (Batch, DIn), jnp.float32]):
+            y = x @ self.w + self.b
+            return y
+
+    eqn_types = _get_last_eqn_types()
+    [out_shape] = eqn_types.out_shapes
+    assert_that(str(out_shape), is_("Shape(shape=('Batch', 'DOut'), dtype='float32')"))
 
     json_dump = type_registry.model_dump_json()
     type_registry.model_validate_json(json_dump)

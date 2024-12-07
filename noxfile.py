@@ -15,6 +15,7 @@ def _install_bundled_deps(session: nox.Session) -> None:
         "--upgrade",
         "-e",
         ".",
+        "-vv",
     )
     session.install(
         "-t",
@@ -115,7 +116,7 @@ def install(session: nox.Session) -> None:
 @nox.session()
 def lint(session: nox.Session) -> None:
     """Runs checks on Python and TypeScript files."""
-    session.install("-e", ".")
+    session.install("-e", ".", "-vv")
     session.install("-r", "./requirements.txt")
     session.install("-r", "src/test/python_tests/requirements.txt")
     session.install("nox")
@@ -133,7 +134,7 @@ def lint(session: nox.Session) -> None:
 @nox.session()
 def tests(session: nox.Session) -> None:
     """Runs all the tests for the extension."""
-    session.install("-e", ".")
+    session.install("-e", ".", "-vv")
     session.install("-r", "src/test/python_tests/requirements.txt")
     session.run("pytest", "-v", "-s", "src/test/python_tests")
     session.run("npm", "test", external=True)
