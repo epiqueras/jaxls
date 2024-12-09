@@ -38,6 +38,9 @@ DimSize = shape_poly.DimSize
 Frame = source_info_util.Frame
 
 
+_TYPED_TYPECHECKING = False
+
+
 if TYPE_CHECKING:
     Shaped = Annotated
 else:
@@ -223,16 +226,13 @@ def _get_return_info(func: Callable[..., Any]) -> tuple[int | None, int | None]:
     return None, None
 
 
-_dont_error = False
-
-
 def _process_out_shape_mismatch(
     frame: Frame, shape_return: ShapeDtypeStructTree, out_shape: ShapeDtypeStructTree
 ) -> EqnTypes:
     return_shape_str = pp_shapes(shape_return)
     inferred_shape_str = pp_shapes(out_shape)
     message = f"Return type {return_shape_str} does not match inferred type {inferred_shape_str}."
-    if not _dont_error:
+    if not _TYPED_TYPECHECKING:
         raise ValueError(message)
     eqn = EqnTypes(
         frame=frame,
@@ -318,11 +318,16 @@ def typed(
 
 
 def run(path: Path):
-    global _dont_error
-    _dont_error = True
+    global _TYPED_TYPECHECKING
+    with open(path, "r") as f:
+        content = f.read()
+        if "@typed" not in content and "@typed_nnx" not in content:
+            typer.echo('{"frames": {}}')
+            return
+    _TYPED_TYPECHECKING = True
     type_registry.frames = {}
     runpy.run_path(str(path))
-    _dont_error = False
+    _TYPED_TYPECHECKING = False
     json_dump = type_registry.model_dump_json()
     typer.echo(json_dump)
 

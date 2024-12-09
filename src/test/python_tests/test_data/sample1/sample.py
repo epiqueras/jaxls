@@ -30,6 +30,6 @@ class Linear(nnx.Module):
         self.b = nnx.Param(jnp.zeros((dout,)))
 
     def __call__(self, x: Shaped[jax.Array, (Batch, DIn), jnp.float32]):
-        c = self.b * 2
-        y = x @ self.w + c
-        return y
+        y = x @ self.w
+        out = y + self.b
+        return out
