@@ -193,7 +193,7 @@ def log_always(message: str) -> None:
 # Internal execution APIs.
 # *****************************************************
 def _run_tool(
-    document: None | workspace.Document = None,
+    document: workspace.Document,
     extra_args: Optional[list[str]] = None,
     use_stdin: bool = False,
 ) -> utils.RunResult | jsonrpc.RpcRunResult | None:
@@ -204,13 +204,12 @@ def _run_tool(
     """
     if extra_args is None:
         extra_args = []
-    if document:
-        if str(document.uri).startswith("vscode-notebook-cell"):
-            # Skip notebook cells
-            return None
-        if utils.is_stdlib_file(document.path):
-            # Skip standard library python files.
-            return None
+    if str(document.uri).startswith("vscode-notebook-cell"):
+        # Skip notebook cells
+        return None
+    if utils.is_stdlib_file(document.path):
+        # Skip standard library python files.
+        return None
 
     # Deep copy here to prevent accidentally updating global settings.
     settings = copy.deepcopy(_get_settings_by_document(document))
@@ -236,13 +235,10 @@ def _run_tool(
         # process then run as module.
         argv = [TOOL_MODULE]
 
-    argv += extra_args
-    if not use_stdin and document:
-        argv += [document.path]
-    argv += TOOL_ARGS + settings["args"]
-    document_source = (
-        document.source.replace("\r\n", "\n") if document and use_stdin else None
-    )
+    argv += extra_args + [document.path] + TOOL_ARGS + settings["args"]
+    if use_stdin:
+        argv += ["--use-stdin"]
+    document_source = document.source.replace("\r\n", "\n") if use_stdin else None
 
     if use_path:
         # This mode is used when running executables.
@@ -293,7 +289,7 @@ def _run_tool(
         if result.stderr:
             log_to_output(result.stderr)
 
-    log_to_output(f"{document.uri if document else 'workspace'} :\r\n{result.stdout}")
+    log_to_output(f"{document.uri} :\r\n{result.stdout}")
     return result
 
 
@@ -302,40 +298,113 @@ def _run_tool(
 # *****************************************************
 
 
+class TypedRunner:
+    def __init__(self):
+        self.type_registry = jaxls.TypeRegistry(frames={})
+
+    def run_on_document(
+        self, document: workspace.TextDocument, use_stdin: bool = False
+    ) -> jaxls.TypeRegistry:
+        result = _run_tool(document, [jaxls.Method.typed], use_stdin=use_stdin)
+        if result is None:
+            return jaxls.TypeRegistry(frames={})
+        return jaxls.type_registry.model_validate_json(result.stdout)
+
+    def on_open(self, document: workspace.TextDocument):
+        new_type_registry = self.run_on_document(document)
+        self.type_registry.frames.update(new_type_registry.frames)
+
+    def on_change(
+        self, document: workspace.TextDocument, params: lsp.DidChangeTextDocumentParams
+    ):
+        new_type_registry = self.run_on_document(document, use_stdin=True)
+        keep_prefix_frames = False
+        if document.path in new_type_registry.frames:
+            for eqn in new_type_registry.frames[document.path].values():
+                if eqn.singleton:
+                    keep_prefix_frames = True
+                    break
+
+        # 0 indexed line number.
+        first_changed_line = sys.maxsize
+        for change in params.content_changes:
+            if isinstance(change, lsp.TextDocumentContentChangeEvent_Type1):
+                first_changed_line = min(first_changed_line, change.range.start.line)
+        if first_changed_line == sys.maxsize or not keep_prefix_frames:
+            self.type_registry.frames.update(new_type_registry.frames)
+            return
+
+        # Remove frames on or after the line that changed.
+        keys_to_delete = []
+        for key, eqn in self.type_registry.frames[document.path].items():
+            if eqn.frame.start_line - 1 >= first_changed_line:
+                keys_to_delete.append(key)
+        for key in keys_to_delete:
+            del self.type_registry.frames[document.path][key]
+
+        # Merge new frames with old frames of current document.
+        new_type_registry.frames[document.path].update(
+            self.type_registry.frames[document.path]
+        )
+        self.type_registry.frames.update(new_type_registry.frames)
+
+    def get_inlay_hints(
+        self, document: workspace.TextDocument
+    ) -> list[lsp.InlayHint] | None:
+        if document.path not in self.type_registry.frames:
+            self.on_open(document)
+        if document.path not in self.type_registry.frames:
+            return None
+        inlay_hints: list[lsp.InlayHint] = []
+        for eqn_types in self.type_registry.frames[document.path].values():
+            frame = eqn_types.frame
+            if eqn_types.message:
+                label = f": {eqn_types.message}"
+                tooltip = eqn_types.tooltip or eqn_types.message
+            else:
+                shape = eqn_types.out_shapes[-1]
+                label = f": {jaxls.pp_shapes(shape)}"
+                tooltip = eqn_types.tooltip or label
+            inlay_hints.append(
+                lsp.InlayHint(
+                    position=lsp.Position(
+                        line=frame.start_line - 1, character=frame.end_column
+                    ),
+                    label=label,
+                    kind=lsp.InlayHintKind.Type,
+                    tooltip=tooltip,
+                    padding_left=False,
+                    padding_right=True,
+                )
+            )
+        return inlay_hints
+
+
+TYPED_RUNNER = TypedRunner()
+
+
 @LSP_SERVER.feature(lsp.TEXT_DOCUMENT_INLAY_HINT)
 def inlay_hints(params: lsp.InlayHintParams):
-    document = LSP_SERVER.workspace.get_document(params.text_document.uri)
-    log_to_output("Computing inlay hints.")
-    result = _run_tool(document, [jaxls.Method.typed])
-    if result is None:
-        return None
+    document = LSP_SERVER.workspace.get_text_document(params.text_document.uri)
+    log_to_output("Called inlay hints.")
+    return TYPED_RUNNER.get_inlay_hints(document)
 
-    inlay_hints: list[lsp.InlayHint] = []
-    type_registry = jaxls.type_registry.model_validate_json(result.stdout)
-    if document.path not in type_registry.frames:
-        return None
-    for eqn_types in type_registry.frames[document.path].values():
-        frame = eqn_types.frame
-        if eqn_types.message:
-            label = f": {eqn_types.message}"
-            tooltip = eqn_types.tooltip or eqn_types.message
-        else:
-            shape = eqn_types.out_shapes[-1]
-            label = f": {jaxls.pp_shapes(shape)}"
-            tooltip = eqn_types.tooltip or label
-        inlay_hints.append(
-            lsp.InlayHint(
-                position=lsp.Position(
-                    line=frame.start_line - 1, character=frame.end_column
-                ),
-                label=label,
-                kind=lsp.InlayHintKind.Type,
-                tooltip=tooltip,
-                padding_left=False,
-                padding_right=True,
-            )
-        )
-    return inlay_hints
+
+# *****************************************************
+# Document handlers.
+# *****************************************************
+
+
+@LSP_SERVER.feature(lsp.TEXT_DOCUMENT_DID_OPEN)
+def did_open(params: lsp.DidOpenTextDocumentParams):
+    document = LSP_SERVER.workspace.get_text_document(params.text_document.uri)
+    TYPED_RUNNER.on_open(document)
+
+
+@LSP_SERVER.feature(lsp.TEXT_DOCUMENT_DID_CHANGE)
+def did_change(params: lsp.DidChangeTextDocumentParams):
+    document = LSP_SERVER.workspace.get_text_document(params.text_document.uri)
+    TYPED_RUNNER.on_change(document, params)
 
 
 # *****************************************************

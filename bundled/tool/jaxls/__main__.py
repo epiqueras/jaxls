@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import typer
@@ -5,8 +6,12 @@ import typer
 from .methods import Method, methods
 
 
-def app(method: Method, path: Path):
-    methods[method](path)
+def app(method: Method, path: Path, *, use_stdin: bool = False):
+    if use_stdin:
+        code = sys.stdin.read()
+    else:
+        code = None
+    methods[method](path, code)
 
 
 def main():

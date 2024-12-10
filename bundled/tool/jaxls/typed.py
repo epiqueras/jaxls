@@ -158,6 +158,7 @@ class EqnTypes:
     out_shapes: list[Shape]
     message: str | None = None
     tooltip: str | None = None
+    singleton: bool = False
 
 
 def _process_eqn(
@@ -207,6 +208,7 @@ def _process_error(frame: traceback.FrameSummary, message: str) -> Types:
         ),
         out_shapes=[],
         message=message,
+        singleton=True,
     )
     return Types(eqns=[eqn])
 
@@ -245,7 +247,11 @@ def _process_out_shape_mismatch(
 
 class TypeRegistry(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(arbitrary_types_allowed=True, strict=True)
+    # Path -> Hash -> EqnTypes
     frames: dict[str, dict[int, EqnTypes]]
+
+    def clear(self) -> None:
+        self.frames.clear()
 
 
 type_registry: TypeRegistry = TypeRegistry(frames={})
@@ -317,16 +323,23 @@ def typed(
     return cast(_F, func)
 
 
-def run(path: Path):
+def run(path: Path, code: str | None):
     global _TYPED_TYPECHECKING
-    with open(path, "r") as f:
-        content = f.read()
-        if "@typed" not in content and "@typed_nnx" not in content:
-            typer.echo('{"frames": {}}')
-            return
+    if code is None:
+        with open(path, "r") as f:
+            content = f.read()
+    else:
+        content = code
+    if "@typed" not in content and "@typed_nnx" not in content:
+        typer.echo(TypeRegistry(frames={}).model_dump_json())
+        return
+
     _TYPED_TYPECHECKING = True
-    type_registry.frames = {}
-    runpy.run_path(str(path))
+    type_registry.clear()
+    if code is None:
+        runpy.run_path(str(path))
+    else:
+        exec(compile(code, path, "exec"), {"__file__": str(path)})
     _TYPED_TYPECHECKING = False
     json_dump = type_registry.model_dump_json()
     typer.echo(json_dump)
